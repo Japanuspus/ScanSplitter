@@ -1,4 +1,4 @@
-#!/usr/bin/python2.7
+#!/usr/local/bin/python2.7
 """
 splitByQR.py - A script for splitting pdf-files based on QR-coded separator pages
 

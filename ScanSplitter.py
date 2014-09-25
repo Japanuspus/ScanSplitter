@@ -1,8 +1,14 @@
 #!/usr/local/bin/python2.7
 """
-splitByQR.py - A script for splitting pdf-files based on QR-coded separator pages
+ScanSplitter.py - A script for splitting pdf-files based on QR-coded separator pages
 
-Has a bunch of anoying prerequisites:
+Usage 1: Split from QR codes
+  ScanSplitter [by_separator] <pdf_file>
+
+Usage 2: Split from page numbers
+  ScanSplitter by_pageno <pdf_file> <page 1>,<page 2>,...,<page N>
+
+This software requires you to install a lot of helpers:
 - GhostView must be installed on path as gs
 - zbar library must be installed
 - python pillow package must be installed
@@ -19,6 +25,8 @@ import os
 import tempfile
 import contextlib
 import shutil
+import itertools
+import argparse
 
 @contextlib.contextmanager
 def temporary_directory(*args, **kwargs):
@@ -63,30 +71,60 @@ def get_separator_pages(file_name):
 		separator_pages = [float(os.path.splitext(os.path.basename(f))[0]) for f in thumbs if isqr(f)]
 	return separator_pages
 
-def split_pdf_byseparators(file_name, separator_pages, base_name = None):
+def split_pdf(file_name, from_to_pairs, base_name = None):
 	if base_name is None:
 		base_name = os.path.splitext(file_name)[0]
-	first_page = 1
-	for sp in separator_pages:
-		if sp == first_page:
-			first_page = sp+1
-			continue
-		out_file_name = '%s_%d.pdf'%(base_name, first_page)
-		call_gs('-sDEVICE=pdfwrite',
-			'-dFirstPage=%d'%first_page,
-			'-dLastPage=%d'%(sp-1),
-			'-o%s'%out_file_name, file_name)
-		first_page = sp+1
-	# write remainder
-	call_gs('-sDEVICE=pdfwrite',
-		'-dFirstPage=%d'%first_page,
-		'-o%s'%out_file_name, file_name)
+	for (from_page,to_page) in from_to_pairs:
+		out_file_name = '%s_%d.pdf'%(base_name, from_page)
+		if to_page is None:
+			# write remainder
+			call_gs('-sDEVICE=pdfwrite',
+				'-dFirstPage=%d'%from_page,
+				'-o%s'%out_file_name, file_name)
+		else:
+			call_gs('-sDEVICE=pdfwrite',
+				'-dFirstPage=%d'%from_page,
+				'-dLastPage=%d'%to_page,
+				'-o%s'%out_file_name, file_name)
 
-def main(pdfname):
-	separator_pages = get_separator_pages(pdfname)
-	split_pdf_byseparators(pdfname, separator_pages)
+def fromto_by_separators(s):
+    next_from = 1
+    for next_sep in s:
+        if next_sep == next_from:
+            next_from = next_sep+1
+            continue
+        yield (next_from, next_sep-1)
+        next_from = next_sep+1
+    yield (next_from, None)
 
+def main_by_separator(parser, argv):
+	parser.add_argument('pdf_file', help = 'PDF file with QR tagged separator pages')
+	args = parser.parse_args(argv)
+
+	separator_pages = get_separator_pages(args.pdf_file)
+	split_pdf(args.pdf_file, fromto_by_separators(separator_pages))
+
+def main_by_pageno(parser, argv):
+	parser.add_argument('pdf_file', help = 'PDF file with QR tagged separator pages')
+	parser.add_argument('pages', help = 'Comma-separated list of page numbers to split at')
+	args = parser.parse_args(argv)
+
+	pages = [int(s) for s in args.pages.split(',')]
+	split_pdf(args.pdf_file, itertools.izip_longest(pages, (s-1 for s in pages[1:])))
+
+def main(argv):
+	parser = argparse.ArgumentParser(
+		description=__doc__,
+		formatter_class=argparse.RawDescriptionHelpFormatter)
+	mainmap = {
+		'by_separator':  main_by_separator,
+		'by_pageno':  main_by_pageno,
+		}
+	if len(argv)>1 and argv[1] in mainmap:
+		mainmap[argv[1]](parser, argv[2:])
+	else:
+		main_by_separator(parser, argv[1:])
 
 if __name__ == '__main__':
 	import sys
-	main(*sys.argv[1:])
+	main(sys.argv)
